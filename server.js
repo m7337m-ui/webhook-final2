@@ -6,42 +6,54 @@ app.use(express.json());
 const VERIFY_TOKEN = process.env.VERIFY_TOKEN;
 const WHATSAPP_TOKEN = process.env.WHATSAPP_TOKEN;
 const PHONE_NUMBER_ID = process.env.PHONE_NUMBER_ID;
-const GROQ_API_KEY = process.env.GROQ_API_KEY;
+
+console.log("=== ENV CHECK ===");
+console.log("VERIFY_TOKEN exists:",!!VERIFY_TOKEN);
+console.log("WHATSAPP_TOKEN exists:",!!WHATSAPP_TOKEN);
+console.log("PHONE_NUMBER_ID exists:",!!PHONE_NUMBER_ID);
 
 app.get('/webhook', (req, res) => {
-  if (req.query['hub.mode'] === 'subscribe' && req.query['hub.verify_token'] === VERIFY_TOKEN) {
-    return res.status(200).send(req.query['hub.challenge']);
+  const mode = req.query['hub.mode'];
+  const token = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+  console.log("GET /webhook RECEIVED", { mode, token });
+  if (mode === 'subscribe' && token === VERIFY_TOKEN) {
+    console.log("WEBHOOK VERIFIED");
+    res.status(200).send(challenge);
+  } else {
+    console.log("VERIFY FAILED");
+    res.sendStatus(403);
   }
-  res.sendStatus(403);
 });
 
 app.post('/webhook', async (req, res) => {
-  res.sendStatus(200);
+  console.log("POST /webhook RECEIVED", JSON.stringify(req.body, null, 2));
   try {
-    const msg = req.body.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
-    if (!msg ||!msg.text) return;
-    const from = msg.from;
-    const text = msg.text.body;
-    console.log("من: " + from + " رسالة: " + text);
-
-    const aiRes = await axios.post('https://api.groq.com/openai/v1/chat/completions', {
-      model: "llama-3.3-70b-versatile",
-      messages: [
-        {role:"system", content:"انت مساعد واتساب ذكي سعودي، ترد بلهجة بيضاء مختصرة وودودة."},
-        {role:"user", content: text}
-      ]
-    }, {headers:{Authorization:`Bearer ${GROQ_API_KEY}`}});
-
-    const reply = aiRes.data.choices[0].message.content;
-
-    await axios.post(`https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages`, {
-      messaging_product:"whatsapp",
-      to: from,
-      text: {body: reply}
-    }, {headers:{Authorization:`Bearer ${WHATSAPP_TOKEN}`}});
-
-  } catch(e){ console.log(e.response?.data || e.message) }
+    const entry = req.body.entry?.[0];
+    const changes = entry?.changes?.[0];
+    const value = changes?.value;
+    const message = value?.messages?.[0];
+    if (message) {
+      const from = message.from;
+      const text = message.text?.body || "هلا";
+      console.log(`Message from ${from}: ${text}`);
+      await axios.post(
+        `https://graph.facebook.com/v20.0/${PHONE_NUMBER_ID}/messages`,
+        {
+          messaging_product: "whatsapp",
+          to: from,
+          text: { body: `تم الاستلام: ${text}` }
+        },
+        { headers: { Authorization: `Bearer ${WHATSAPP_TOKEN}`, "Content-Type": "application/json" } }
+      );
+      console.log("Reply sent");
+    }
+  } catch (e) {
+    console.error("Error:", e.response?.data || e.message);
+  }
+  res.sendStatus(200);
 });
 
-app.get('/', (req,res)=> res.send('BOT LIVE'));
-app.listen(process.env.PORT || 3000, ()=> console.log('Live'));
+app.get('/', (req,res)=> res.send('Webhook Live'));
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, ()=> console.log(`Server running on ${PORT}`));
